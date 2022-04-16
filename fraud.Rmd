@@ -34,6 +34,7 @@ levels(df$Class) = c("NonFraud", "Fraud")
 ```{r}
 prop.table(table(df$Class))
 ```
+
 ###########################
 <!-- install.packages("snow") -->
 <!-- install.packages("doSNOW", repos="http://R-Forge.R-project.org") -->
@@ -84,7 +85,6 @@ bg = bg_pred[X.test$Class == "NonFraud"]
 x = c(-fg, -bg)
 lab = c(rep(1, length(fg)), rep(0, length(bg)))
 c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
-c
 plot(c)
 ```
 
@@ -112,7 +112,6 @@ bg = predlg[X.test$Class == "NonFraud"]
 x = c(fg, bg)
 lab = c(rep(1, length(fg)), rep(0, length(bg)))
 c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
-c
 plot(c)
 ```
 
