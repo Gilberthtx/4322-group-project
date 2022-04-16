@@ -1,0 +1,132 @@
+---
+title: "fraud"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Read file
+df = read.csv('F:/OneDrive - University Of Houston/Study/11th semester/MATH 4322/GP/creditcard.csv')
+
+### Drop Time column
+df$Time = NULL
+
+### Scale Amount column
+df$Amount = scale(df$Amount)
+
+### Check for missing values
+```{r}
+colSums(is.na(df))
+```
+
+### Plot histograms of all predictors to check if they are normalized
+par(mfrow = (c(4,8)))
+for (col in 1:ncol(df[, -30])) {
+  hist(df[, col], main = colnames(df)[col])}
+
+### Convert response variable Class to factors
+df$Class = as.factor(df$Class)
+levels(df$Class) = c("NonFraud", "Fraud")
+
+### Check for Class distribution
+```{r}
+prop.table(table(df$Class))
+```
+###########################
+<!-- install.packages("snow") -->
+<!-- install.packages("doSNOW", repos="http://R-Forge.R-project.org") -->
+<!-- install.packages("caret") -->
+<!-- install.packages("ROSE") -->
+<!-- install.packages("PRROC") -->
+<!-- install.packages("rpart") -->
+library(rpart)
+library(caret) # for cross validation training and hyper-parameter tuning
+library(doSNOW) # for parallel computing
+library(PRROC) # for evaluation metrics
+library(randomForest)
+###########################
+# Validation Set Approach  
+### Stratified split the dataset
+cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
+
+### Get row index for training set
+train = cvIndex$Fold1
+
+### Create training, test sets
+```{r}
+X.train = df[train,]
+X.test = df[-train,]
+table(X.train$Class)
+table(X.test$Class)
+```
+
+## Train classification tree
+```{r}
+tree.fit = rpart(Class ~ ., data = X.train, method = "class")
+summary(tree.fit)
+plot(tree.fit)
+text(tree.fit, pretty = 0)
+```
+
+### Confusion Matrix
+```{r}
+confusionMatrix(predict(tree.fit, newdata = X.test, type = "class"), X.test$Class, positive = 'Fraud')  
+```
+
+### Tree PRAUC
+```{r}
+fg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 2]
+bg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 1]
+fg = fg_pred[X.test$Class == "Fraud"]
+bg = bg_pred[X.test$Class == "NonFraud"]
+x = c(-fg, -bg)
+lab = c(rep(1, length(fg)), rep(0, length(bg)))
+c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
+c
+plot(c)
+```
+
+### Pruned tree does not make much difference, you can just skip this
+```{r}
+cvtree.fit = cv.tree(tree.fit, FUN = prune.misclass)
+plot(cvtree.fit$size, cvtree.fit$dev, type = "b", xlab = "Tree size", ylab = "CV Error Rate")
+pruned.fit = prune.misclass(tree.fit, best = 5)
+summary(pruned.fit)
+confusionMatrix(predict(pruned.fit, newdata = X.test, type = "class"), X.test$Class, positive = 'Fraud')  
+```
+
+## Train logistic regression model (using same training, test set)
+```{r}
+logreg <- glm(Class ~ . , family = binomial, data = X.train)
+predlg = predict(logreg, newdata = X.test, type = "response")
+lg_pred = ifelse(predlg <= 0.5, "NonFraud", "Fraud")
+confusionMatrix(factor(lg_pred, levels = c("NonFraud", "Fraud")), X.test$Class, positive = 'Fraud')
+```
+
+### Logistic Regression PRAUC
+```{r}
+fg = predlg[X.test$Class == "Fraud"]
+bg = predlg[X.test$Class == "NonFraud"]
+x = c(fg, bg)
+lab = c(rep(1, length(fg)), rep(0, length(bg)))
+c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
+c
+plot(c)
+```
+
+#################################
+# Stratified 5-fold Cross Validation approach
+cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE)
+
+cl = makeCluster(8, outfile="")
+registerDoSNOW(cl)
+
+cvtree.fit = train(Class ~ ., data = df, method = "rpart", metric = "AUC", trControl = trControl)
+stopCluster(cl)
+
+cvtree.fit
+summary(cvtree.fit)
+
