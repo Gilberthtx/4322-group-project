@@ -27,13 +27,14 @@ for (col in 1:ncol(df[, -30])) {
   hist(df[, col], main = colnames(df)[col])}
 
 ### Convert response variable Class to factors
-df$Class = as.factor(df$Class)
-levels(df$Class) = c("NonFraud", "Fraud")
+df$Class = factor(df$Class, levels = rev(levels(factor(df$Class))))
+levels(df$Class) = c("Fraud", "NonFraud")
 
 ### Check for Class distribution
 ```{r}
 prop.table(table(df$Class))
 ```
+
 ###########################
 <!-- install.packages("snow") -->
 <!-- install.packages("doSNOW", repos="http://R-Forge.R-project.org") -->
@@ -41,14 +42,17 @@ prop.table(table(df$Class))
 <!-- install.packages("ROSE") -->
 <!-- install.packages("PRROC") -->
 <!-- install.packages("rpart") -->
+<!-- install.packages("ranger") -->
+
+library(ranger)
 library(rpart)
 library(caret) # for cross validation training and hyper-parameter tuning
 library(doSNOW) # for parallel computing
 library(PRROC) # for evaluation metrics
-library(randomForest)
 ###########################
-# Validation Set Approach  
+# Validation Set Approach
 ### Stratified split the dataset
+set.seed(1)
 cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
 
 ### Get row index for training set
@@ -77,8 +81,8 @@ confusionMatrix(predict(tree.fit, newdata = X.test, type = "class"), X.test$Clas
 
 ### Tree PRAUC
 ```{r}
-fg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 2]
-bg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 1]
+fg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 1]
+bg_pred = predict(tree.fit, newdata = X.test, type = "prob")[, 2]
 fg = fg_pred[X.test$Class == "Fraud"]
 bg = bg_pred[X.test$Class == "NonFraud"]
 x = c(-fg, -bg)
@@ -99,34 +103,80 @@ confusionMatrix(predict(pruned.fit, newdata = X.test, type = "class"), X.test$Cl
 
 ## Train logistic regression model (using same training, test set)
 ```{r}
-logreg <- glm(Class ~ . , family = binomial, data = X.train)
+logreg <- glm(Class ~ . , family = "binomial", data = X.train)
 predlg = predict(logreg, newdata = X.test, type = "response")
-lg_pred = ifelse(predlg <= 0.5, "NonFraud", "Fraud")
-confusionMatrix(factor(lg_pred, levels = c("NonFraud", "Fraud")), X.test$Class, positive = 'Fraud')
+lg_pred = ifelse(predlg <= 0.5, "Fraud", "NonFraud")
+confusionMatrix(factor(lg_pred), X.test$Class, positive = 'Fraud')
 ```
 
 ### Logistic Regression PRAUC
 ```{r}
 fg = predlg[X.test$Class == "Fraud"]
 bg = predlg[X.test$Class == "NonFraud"]
-x = c(fg, bg)
+x = c(-fg, -bg)
 lab = c(rep(1, length(fg)), rep(0, length(bg)))
 c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
-c
 plot(c)
 ```
 
+## Random Forest
+```{r}
+rf = ranger(Class ~ ., data = X.train, mtry = 5, probability = TRUE, num.trees = 500)
+rf_pred = predict(rf, data = X.test)
+fg_pred = rf_pred$predictions[, 1]
+bg_pred = rf_pred$predictions[, 2]
+fg = fg_pred[X.test$Class == "Fraud"]
+bg = bg_pred[X.test$Class == "NonFraud"]
+x = c(-fg, -bg)
+lab = c(rep(1, length(fg)), rep(0, length(bg)))
+c = pr.curve(scores.class0 = x, weights.class0 = lab, curve=TRUE)
+plot(c)
+```
+```{r}
+temp = ifelse(rf_pred$predictions[, 1] > 0.5, "Fraud", "NonFraud")
+confusionMatrix(factor(temp), X.test$Class, positive = 'Fraud')
+```
+
+# ```{r}
+# mySummary  <- function(data, lev = NULL, model = NULL){
+#   temp = data$Fraud
+#   print(lev)
+#   a <- prSummary(data, lev, model)
+#   out <- a
+#   out}
+# ```
+
 #################################
 # Stratified 5-fold Cross Validation approach
+### Create folds
+set.seed(1)
 cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE)
 
-cl = makeCluster(8, outfile="")
+### Training control
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE)
+
+### Run workers
+cl = makeCluster(4, outfile="")
 registerDoSNOW(cl)
 
-cvtree.fit = train(Class ~ ., data = df, method = "rpart", metric = "AUC", trControl = trControl)
+### Train the model
+set.seed(1)
+fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = c(5), splitrule = "gini", min.node.size=c(20)))
+
+### Stop workers and output
 stopCluster(cl)
+fit
 
-cvtree.fit
-summary(cvtree.fit)
 
+# GLM
+fit = train(Class ~ ., data = df, method = "gbm", metric = "AUC", trControl = trControl)
+
+# RF
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = FALSE, verboseIter = TRUE, savePredictions = TRUE)
+fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose=TRUE, tuneGrid = expand.grid(mtry = c(5,6,7), splitrule = "gini", min.node.size=c(1, 10, 15, 20, 25, 30, 35, 40, 50, 100, 150, 200)))
+
+# Bagged
+fit = train(Class ~ ., data = df, method = "treebag", nbagg = 100, metric = "AUC", trControl = trControl)
+
+# Decision tree with cp
+fit = train(Class ~ ., data = df, method = "rpart2", tuneLength = 20, metric = "AUC", trControl = trControl, control = rpart.control(cp = 0 ))
