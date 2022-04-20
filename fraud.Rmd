@@ -6,6 +6,10 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+### Memory error
+#options(java.parameters = "-Xmx16g")
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
+
 
 ### Read file
 df = read.csv('F:/OneDrive - University Of Houston/Study/11th semester/MATH 4322/GP/creditcard.csv')
@@ -153,30 +157,45 @@ set.seed(1)
 cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
 
 ### Training control
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE)
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE, search = "random")
 
 ### Run workers
-cl = makeCluster(4, outfile="")
+cl = makeCluster(8, outfile="")
 registerDoSNOW(cl)
 
 ### Train the model
 set.seed(1)
-fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = c(5), splitrule = "gini", min.node.size=c(20)))
+NN = train(Class ~ ., data = df, method = "avNNet", tuneLength = 10, metric = "AUC", trControl = trControl, verbose = TRUE)
+
+plot(NN, metric="AUC")
+
+
 
 ### Stop workers and output
 stopCluster(cl)
-fit
+NN
 
 
 # GLM
-fit = train(Class ~ ., data = df, method = "gbm", metric = "AUC", trControl = trControl)
+GLM = train(Class ~ ., data = df, method = "glm", metric = "AUC", trControl = trControl)
 
 # RF
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = FALSE, verboseIter = TRUE, savePredictions = TRUE)
-fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose=TRUE, tuneGrid = expand.grid(mtry = c(5,6,7), splitrule = "gini", min.node.size=c(1, 10, 15, 20, 25, 30, 35, 40, 50, 100, 150, 200)))
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = FALSE, verboseIter = TRUE, savePredictions = TRUE, indexFinal = 1:1000)
+RF = train(Class ~ ., data = df, method = "ranger", num.trees = 500, importance = 'impurity', metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = 29, splitrule = "gini", min.node.size = 1))
+varImp(RF)
 
 # Bagged
-fit = train(Class ~ ., data = df, method = "treebag", nbagg = 100, metric = "AUC", trControl = trControl)
+Bagged = train(Class ~ ., data = df, method = "treebag", metric = "AUC", trControl = trControl, verbose = TRUE, control = rpart.control(cp = 0, ))
 
 # Decision tree with cp
-fit = train(Class ~ ., data = df, method = "rpart2", tuneLength = 20, metric = "AUC", trControl = trControl, control = rpart.control(cp = 0 ))
+DT = train(Class ~ ., data = df, method = "rpart2", tuneLength = 20, metric = "AUC", trControl = trControl, control = rpart.control(xval = 10, minsplit = 1, minbucket = 1, cp = 0))
+
+# NN
+NN = train(Class ~ ., data = df, method = "nnet", metric = "AUC", trControl = trControl, tuneLength = 50, verbose = TRUE)
+
+DDT
+results <- resamples(list(GLM = GLM, DT = DT))
+bwplot(results)
+
+
+

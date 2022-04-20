@@ -12,14 +12,11 @@ library(PRROC) # for evaluation metrics
 
 set.seed(1)
 cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, indexFinal = 1:200)
-
-cl = makeCluster(4, outfile="")
+trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE, search = "random")
+cl = makeCluster(7, outfile="")
 registerDoSNOW(cl)
 
 set.seed(1)
-fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, tuneGrid = expand.grid(mtry = 5, splitrule = "gini", min.node.size=10))
+NN = train(Class ~ ., data = df, method = "nnet", tuneLength = 50, metric = "AUC", trControl = trControl, verbose = TRUE)
 stopCluster(cl)
-fit
-
-fit = train(Class ~ ., data = df, method = "treebag", metric = "AUC", trControl = trControl, tuneGrid = expand.grid(mtry = 5, splitrule = "gini", min.node.size=10))
+NN
