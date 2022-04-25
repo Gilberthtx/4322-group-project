@@ -6,6 +6,10 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+### Memory error
+#options(java.parameters = "-Xmx16g")
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
+
 
 ### Read file
 df = read.csv('F:/OneDrive - University Of Houston/Study/11th semester/MATH 4322/GP/creditcard.csv')
@@ -35,7 +39,7 @@ levels(df$Class) = c("Fraud", "NonFraud")
 prop.table(table(df$Class))
 ```
 
-###########################
+############################################################
 <!-- install.packages("snow") -->
 <!-- install.packages("doSNOW", repos="http://R-Forge.R-project.org") -->
 <!-- install.packages("caret") -->
@@ -43,13 +47,14 @@ prop.table(table(df$Class))
 <!-- install.packages("PRROC") -->
 <!-- install.packages("rpart") -->
 <!-- install.packages("ranger") -->
+<!-- install.packages("rpart.plot") -->
 
 library(ranger)
 library(rpart)
 library(caret) # for cross validation training and hyper-parameter tuning
 library(doSNOW) # for parallel computing
 library(PRROC) # for evaluation metrics
-###########################
+############################################################
 # Validation Set Approach
 ### Stratified split the dataset
 set.seed(1)
@@ -70,8 +75,7 @@ table(X.test$Class)
 ```{r}
 tree.fit = rpart(Class ~ ., data = X.train, method = "class")
 summary(tree.fit)
-plot(tree.fit)
-text(tree.fit, pretty = 0)
+rpart.plot::rpart.plot(tree.fit)
 ```
 
 ### Confusion Matrix
@@ -101,11 +105,12 @@ summary(pruned.fit)
 confusionMatrix(predict(pruned.fit, newdata = X.test, type = "class"), X.test$Class, positive = 'Fraud')  
 ```
 
-## Train logistic regression model (using same training, test set)
+### Train logistic regression model (using same training, test set)
 ```{r}
 logreg <- glm(Class ~ . , family = "binomial", data = X.train)
+
 predlg = predict(logreg, newdata = X.test, type = "response")
-lg_pred = ifelse(predlg <= 0.5, "Fraud", "NonFraud")
+lg_pred = ifelse(predlg <= 0.9, "Fraud", "NonFraud")
 confusionMatrix(factor(lg_pred), X.test$Class, positive = 'Fraud')
 ```
 
@@ -137,46 +142,53 @@ temp = ifelse(rf_pred$predictions[, 1] > 0.5, "Fraud", "NonFraud")
 confusionMatrix(factor(temp), X.test$Class, positive = 'Fraud')
 ```
 
-# ```{r}
-# mySummary  <- function(data, lev = NULL, model = NULL){
-#   temp = data$Fraud
-#   print(lev)
-#   a <- prSummary(data, lev, model)
-#   out <- a
-#   out}
-# ```
-
-#################################
-# Stratified 5-fold Cross Validation approach
+############################################################
+# Stratified 10-fold Cross Validation approach
 ### Create folds
 set.seed(1)
-cvIndex = createFolds(df$Class, k = 5, returnTrain = T)
+cvIndex = createFolds(df$Class, k = 10, returnTrain = T)
 
 ### Training control
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE)
+trControl = trainControl(index = cvIndex, method = "cv", returnData = FALSE, classProbs = TRUE, summaryFunction = prSummary, allowParallel = TRUE, verboseIter = TRUE, savePredictions = TRUE)
 
-### Run workers
-cl = makeCluster(4, outfile="")
+### Run workers for parallel computing
+cl = makeCluster(8, outfile="")
 registerDoSNOW(cl)
 
-### Train the model
+### Train model: Select a model below and paste the code here.
 set.seed(1)
-fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = c(5), splitrule = "gini", min.node.size=c(20)))
+model = train(.................)
 
-### Stop workers and output
+### Stop workers
 stopCluster(cl)
-fit
 
+## Tuned Decision tree fully grown
+DT_tuned_no_cp = train(Class ~ ., data = df, method = "rpart", metric = "AUC", trControl = trControl, tuneGrid = expand.grid(cp = 0), control = rpart.control(minsplit = 22, minbucket = 7, cp = 0))
 
-# GLM
-fit = train(Class ~ ., data = df, method = "gbm", metric = "AUC", trControl = trControl)
+## Tuned Decision tree hyperparameter tuning for best cp
+DT_tuned_cp_search = train(Class ~ ., data = df, method = "rpart", metric = "AUC", trControl = trControl, tuneGrid = expand.grid(cp = runif(200, 0, 0.01)), control = rpart.control(minsplit = 22, minbucket = 7, cp = 0))
 
-# RF
-trControl = trainControl(index = cvIndex, method = "cv", classProbs = TRUE, summaryFunction = prSummary, allowParallel = FALSE, verboseIter = TRUE, savePredictions = TRUE)
-fit = train(Class ~ ., data = df, method = "ranger", metric = "AUC", trControl = trControl, verbose=TRUE, tuneGrid = expand.grid(mtry = c(5,6,7), splitrule = "gini", min.node.size=c(1, 10, 15, 20, 25, 30, 35, 40, 50, 100, 150, 200)))
+## Tuned Decision tree with optimal cp
+DT_tuned_cp = train(Class ~ ., data = df, method = "rpart", metric = "AUC", trControl = trControl, tuneGrid = expand.grid(cp = 0.002186453), control = rpart.control(minsplit = 22, minbucket = 7))
 
-# Bagged
-fit = train(Class ~ ., data = df, method = "treebag", nbagg = 100, metric = "AUC", trControl = trControl)
+## Bagged tree
+Bagged = train(Class ~ ., data = df, method = "ranger", num.trees = 500, importance = 'impurity', metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = 29, splitrule = "gini", min.node.size = 10))
 
-# Decision tree with cp
-fit = train(Class ~ ., data = df, method = "rpart2", tuneLength = 20, metric = "AUC", trControl = trControl, control = rpart.control(cp = 0 ))
+## RF
+RF = train(Class ~ ., data = df, method = "ranger", num.trees = 500, importance = 'impurity', metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(mtry = 6, splitrule = "gini", min.node.size = 10))
+
+## GLM
+GLM = train(Class ~ ., data = df, method = "glm", metric = "AUC", trControl = trControl, family = "binomial")
+
+## NN
+NN = train(Class ~ ., data = df, method = "nnet", maxit = 200, metric = "AUC", trControl = trControl, verbose = TRUE, tuneGrid = expand.grid(size = 14, decay = 1.25))
+
+### Save model
+save(GLM, file = "GLM.Rdata")
+
+### Load model
+load("GLM.Rdata")
+
+### Compare model
+results <- resamples(list(GLM = GLM, DT = DT, NN = NN))
+bwplot(results)
